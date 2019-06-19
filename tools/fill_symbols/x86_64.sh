@@ -23,12 +23,20 @@ symbol_table_loc=$((16#$($objdump -D $rcore -j .data -F |grep "<rcore_symbol_tab
 symbol_table_size_loc=$((16#$($objdump -D $rcore -j .data -F |grep "<rcore_symbol_table_size>" |grep -oEi "0x[0-9a-f]+" |grep -oEi "[0-9a-f][0-9a-f]+")))
 echo $symbol_table_loc
 echo $symbol_table_size_loc
-FILESIZE=$(stat -c%s "$tmpfile")
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    FILESIZE=$(stat -f%z "$tmpfile")
+else
+    FILESIZE=$(stat -c%s "$tmpfile")
+fi
 echo $FILESIZE
-dd bs=4096 count=$FILESIZE if=$tmpfile of=$rcore seek=$symbol_table_loc conv=notrunc iflag=count_bytes oflag=seek_bytes
+dd bs=1 count=$FILESIZE if=$tmpfile of=$rcore seek=$symbol_table_loc conv=notrunc
 echo "Writing size"
 python3 -c "open('$tmpfile', 'wb').write(($FILESIZE).to_bytes(8,'little'))"
-FILESIZE=$(stat -c%s "$tmpfile")
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    FILESIZE=$(stat -f%z "$tmpfile")
+else
+    FILESIZE=$(stat -c%s "$tmpfile")
+fi
 echo $FILESIZE
 dd bs=1 count=$FILESIZE if=$tmpfile of=$rcore seek=$symbol_table_size_loc conv=notrunc
 rm $tmpfile

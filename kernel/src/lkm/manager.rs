@@ -508,7 +508,7 @@ impl ModuleManager {
             return;
         }
         for s in elf.section_iter() {
-            if (s.offset() as usize) == start {
+            if (s.address() as usize) == start {
                 {
                     match s.get_data(elf).unwrap() {
                         SectionData::Rela64(rela_items) => {
