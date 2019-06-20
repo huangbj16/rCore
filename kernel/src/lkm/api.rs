@@ -1,5 +1,5 @@
 use super::*;
-use crate::lkm::manager::ModuleManager;
+use crate::lkm::manager::{ModuleManager, parse_kernel_symbols};
 use crate::lkm::structs::LoadedModule;
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -82,5 +82,5 @@ pub extern "C" fn lkm_api_add_kernel_symbols(start: usize, end: usize) {
     let global_lkmm = &LKM_MANAGER;
     let mut locked_lkmm = global_lkmm.lock();
     let mut lkmm = locked_lkmm.as_mut().unwrap();
-    lkmm.init_kernel_symbols(symbols);
+    lkmm.add_kernel_symbols(parse_kernel_symbols(symbols));
 }
