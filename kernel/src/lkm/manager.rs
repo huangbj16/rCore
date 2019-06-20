@@ -35,23 +35,19 @@ use xmas_elf::{
 // The symbol data table.
 global_asm!(include_str!("symbol_table.asm"));
 
-/// Module Manager is the core part of LKM.
-/// It does these jobs: Load preset(API) symbols; manage module loading dependency and linking modules.
+/// `ModuleManager` is the core part of LKM.
+/// It does these jobs:
+/// - load preset(API) symbols
+/// - manage module loading dependency and linking modules.
 pub struct ModuleManager {
     stub_symbols: BTreeMap<String, ModuleSymbol>,
     loaded_modules: Vec<Box<LoadedModule>>,
 }
 
 lazy_static! {
-    pub static ref LKM_MANAGER: Mutex<Option<ModuleManager>> = Mutex::new(None);
+    pub static ref LKM_MANAGER: Mutex<ModuleManager> = Mutex::new(ModuleManager::new());
 }
 
-unsafe fn write_to_addr(base: usize, offset: usize, val: usize) {
-    unsafe {
-        let addr = base + offset;
-        *(addr as *mut usize) = val;
-    }
-}
 impl ModuleManager {
     /// Load kernel symbols from `rcore_symbol_table` label
     pub fn load_kernel_symbols(&mut self) {
@@ -333,26 +329,19 @@ impl ModuleManager {
         unsafe {
             LKM_MANAGER.force_unlock();
         }
+        info!("[LKM] Remove module {:?} done!", name);
         Ok(0)
     }
-    pub fn with<T>(f: impl FnOnce(&mut ModuleManager) -> T) -> T {
-        let global_lkmm: &Mutex<Option<ModuleManager>> = &LKM_MANAGER;
-        let mut locked_lkmm = global_lkmm.lock();
-        let mut lkmm = locked_lkmm.as_mut().unwrap();
-        f(lkmm)
-    }
-    pub fn init() {
-        //assert_has_not_been_called!("[LKM] ModuleManager::init must be called only once");
+
+    pub fn new() -> Self {
         info!("[LKM] Loadable Kernel Module Manager loading...");
         let mut kmm = ModuleManager {
             stub_symbols: BTreeMap::new(),
             loaded_modules: Vec::new(),
         };
         kmm.load_kernel_symbols();
-
-        //let lkmm: Mutex<Option<ModuleManager>>=Mutex::new(None);
-        LKM_MANAGER.lock().replace(kmm);
         info!("[LKM] Loadable Kernel Module Manager loaded!");
+        kmm
     }
 }
 

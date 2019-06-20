@@ -1,5 +1,5 @@
 use super::*;
-use crate::lkm::manager::{ModuleManager, parse_kernel_symbols};
+use crate::lkm::manager::{ModuleManager, parse_kernel_symbols, LKM_MANAGER};
 use crate::lkm::structs::LoadedModule;
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -47,12 +47,11 @@ pub extern "C" fn lkm_api_debug(this_module: usize) {
 
 #[no_mangle]
 pub extern "C" fn lkm_api_query_symbol(symbol: *const u8) -> usize {
-    manager::ModuleManager::with(|man| {
-        match man.resolve_symbol(&unsafe { cstr_to_str(symbol, 256) }) {
-            Some(x) => x,
-            None => 0,
-        }
-    })
+    let symbol = unsafe { cstr_to_str(symbol, 256) };
+    match LKM_MANAGER.lock().resolve_symbol(&symbol) {
+        Some(x) => x,
+        None => 0,
+    }
 }
 
 #[no_mangle]
@@ -75,12 +74,9 @@ pub extern "C" fn lkm_api_info(ptr: *const u8) {
 
 #[no_mangle]
 pub extern "C" fn lkm_api_add_kernel_symbols(start: usize, end: usize) {
-    use crate::lkm::manager::LKM_MANAGER;
     let length = end - start;
     use core::str::from_utf8;
     let symbols = unsafe { from_utf8(from_raw_parts(start as *const u8, length)) }.unwrap();
-    let global_lkmm = &LKM_MANAGER;
-    let mut locked_lkmm = global_lkmm.lock();
-    let mut lkmm = locked_lkmm.as_mut().unwrap();
+    let mut lkmm = LKM_MANAGER.lock();
     lkmm.add_kernel_symbols(parse_kernel_symbols(symbols));
 }
