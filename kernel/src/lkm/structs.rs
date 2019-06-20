@@ -1,8 +1,9 @@
-use super::kernelvm::*;
 use crate::sync::SpinLock as Mutex;
 use alloc::string::*;
 use alloc::sync::Arc;
 use alloc::vec::*;
+use alloc::boxed::Box;
+use xmas_elf::program::Flags;
 
 pub struct ModuleSymbol {
     pub name: String,
@@ -81,13 +82,18 @@ pub enum ModuleState {
     Unloading,
 }
 
+pub trait VSpace: Send {
+    fn start(&self) -> usize;
+    fn add_area(&mut self, start_addr: usize, end_addr: usize, flags: &Flags);
+}
+
 pub struct ModuleRef;
 pub struct LoadedModule {
     pub info: ModuleInfo,
     pub exported_symbols: Vec<ModuleSymbol>,
     pub used_counts: i32,
     pub using_counts: Arc<ModuleRef>,
-    pub vspace: VirtualSpace,
+    pub vspace: Box<VSpace>,
     pub lock: Mutex<()>,
     pub state: ModuleState,
 }

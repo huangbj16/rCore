@@ -1,6 +1,6 @@
 use super::api::*;
 use super::const_reloc as loader;
-use super::kernelvm::*;
+use super::kernelvm::ProviderImpl;
 use super::structs::*;
 use crate::consts::*;
 use crate::lkm::structs::ModuleState::{Ready, Unloading};
@@ -10,23 +10,16 @@ use crate::syscall::SysError::*;
 use crate::syscall::SysResult;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
-use alloc::prelude::*;
-use alloc::string::*;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::*;
-use core::borrow::BorrowMut;
 use core::mem::transmute;
 use core::slice;
 use lazy_static::lazy_static;
-use rcore_memory::memory_set::handler::{ByFrame, MemoryHandler};
-use rcore_memory::memory_set::MemoryAttr;
-use rcore_memory::{Page, PAGE_SIZE};
+use rcore_memory::PAGE_SIZE;
 use xmas_elf::dynamic::Tag;
-use xmas_elf::program::Type::Load;
-use xmas_elf::sections::SectionData;
-use xmas_elf::sections::SectionData::{DynSymbolTable64, Dynamic64, Undefined};
-use xmas_elf::symbol_table::DynEntry64;
-use xmas_elf::symbol_table::Entry;
+use xmas_elf::sections::SectionData::{self, DynSymbolTable64, Dynamic64, Undefined};
+use xmas_elf::symbol_table::{DynEntry64, Entry};
 use xmas_elf::{
     header,
     program::{Flags, Type},
@@ -42,10 +35,17 @@ global_asm!(include_str!("symbol_table.asm"));
 pub struct ModuleManager {
     stub_symbols: BTreeMap<String, ModuleSymbol>,
     loaded_modules: Vec<Box<LoadedModule>>,
+    provider: Box<Provider>,
+}
+
+/// Provider for `ModuleManager`
+pub trait Provider: Send {
+    fn map(&mut self, len: usize) -> Result<Box<VSpace>, &'static str>;
 }
 
 lazy_static! {
-    pub static ref LKM_MANAGER: Mutex<ModuleManager> = Mutex::new(ModuleManager::new());
+    pub static ref LKM_MANAGER: Mutex<ModuleManager> 
+        = Mutex::new(ModuleManager::new(ProviderImpl::default()));
 }
 
 impl ModuleManager {
@@ -176,7 +176,7 @@ impl ModuleManager {
 
         let map_len = elf.map_len();
         // We first map a huge piece. This requires the kernel model to be dense and not abusing vaddr.
-        let mut vspace = { VirtualSpace::new(&KERNELVM_MANAGER, map_len) }.ok_or_else(|| {
+        let mut vspace = self.provider.map(map_len).map_err(|_| {
             error!("[LKM] valloc failed!");
             ENOMEM
         })?;
@@ -191,21 +191,13 @@ impl ModuleManager {
             if ph.get_type().map_err(|_| {
                 error!("[LKM] program header error!");
                 ENOEXEC
-            })? == Load
+            })? == Type::Load
             {
-                let vspace_ref = &mut vspace;
                 let prog_start_addr = base + (ph.virtual_addr() as usize);
                 let prog_end_addr = prog_start_addr + (ph.mem_size() as usize);
                 let offset = ph.offset() as usize;
                 let flags = ph.flags();
-                let mut attr = MemoryAttr::default();
-                if flags.is_write() {
-                    attr = attr.writable();
-                }
-                if flags.is_execute() {
-                    attr = attr.execute();
-                }
-                let area_ref = vspace_ref.add_area(prog_start_addr, prog_end_addr, &attr);
+                vspace.add_area(prog_start_addr, prog_end_addr, &flags);
                 //self.vallocator.map_pages(prog_start_addr, prog_end_addr, &attr);
                 //No need to flush TLB.
                 let target = unsafe {
@@ -219,7 +211,6 @@ impl ModuleManager {
                     target[..file_size].copy_from_slice(&elf.input[offset..offset + file_size]);
                 }
                 target[file_size..].iter_mut().for_each(|x| *x = 0);
-                //drop(vspace);
             }
         }
 
@@ -284,8 +275,7 @@ impl ModuleManager {
         }
         info!("[LKM] calling init_module at {}", lkm_entry);
         unsafe {
-            LKM_MANAGER.force_unlock();
-            let init_module: extern "C" fn() = transmute(lkm_entry);
+            let init_module: unsafe extern "C" fn() = transmute(lkm_entry);
             init_module();
         }
         Ok(0)
@@ -315,8 +305,8 @@ impl ModuleManager {
         if cleanup_func > 0 {
             unsafe {
                 module.state = Unloading;
-                let cleanup_module: fn() = transmute(cleanup_func);
-                (cleanup_module)();
+                let cleanup_module: unsafe extern "C" fn() = transmute(cleanup_func);
+                cleanup_module();
             }
         } else {
             error!("[LKM] you cannot plug this module out.");
@@ -326,18 +316,16 @@ impl ModuleManager {
 
         // remove module
         self.loaded_modules.retain(|m| m.info.name != name);
-        unsafe {
-            LKM_MANAGER.force_unlock();
-        }
         info!("[LKM] Remove module {:?} done!", name);
         Ok(0)
     }
 
-    pub fn new() -> Self {
+    pub fn new(provider: impl Provider + 'static) -> Self {
         info!("[LKM] Loadable Kernel Module Manager loading...");
         let mut kmm = ModuleManager {
             stub_symbols: BTreeMap::new(),
             loaded_modules: Vec::new(),
+            provider: Box::new(provider),
         };
         kmm.load_kernel_symbols();
         info!("[LKM] Loadable Kernel Module Manager loaded!");
@@ -385,7 +373,7 @@ impl ElfExt for ElfFile<'_> {
         let mut min_addr: usize = ::core::usize::MAX;
         let mut off_start: usize = 0;
         for ph in self.program_iter() {
-            if ph.get_type().unwrap() == Load {
+            if ph.get_type().unwrap() == Type::Load {
                 if (ph.virtual_addr() as usize) < min_addr {
                     min_addr = ph.virtual_addr() as usize;
                     off_start = ph.offset() as usize;
