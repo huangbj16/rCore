@@ -1,11 +1,11 @@
 use super::*;
-use crate::lkm::manager::{ModuleManager, parse_kernel_symbols, LKM_MANAGER};
-use crate::lkm::structs::LoadedModule;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use core::alloc::{GlobalAlloc, Layout};
 use core::slice::from_raw_parts;
+use rcore_lkm::manager::ModuleManager;
+use rcore_lkm::structs::LoadedModule;
 
 pub fn get_module(this_module: usize) -> &'static mut LoadedModule {
     unsafe {

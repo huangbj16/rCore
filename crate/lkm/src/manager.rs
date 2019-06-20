@@ -1,32 +1,15 @@
-use super::api::*;
 use super::const_reloc as loader;
-use super::kernelvm::ProviderImpl;
 use super::structs::*;
-use crate::consts::*;
-use crate::lkm::structs::ModuleState::{Ready, Unloading};
-use crate::memory::GlobalFrameAlloc;
-use crate::sync::{Condvar, SpinLock as Mutex};
-use crate::syscall::SysError::*;
-use crate::syscall::SysResult;
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::*;
 use core::mem::transmute;
-use core::slice;
-use lazy_static::lazy_static;
-use rcore_memory::PAGE_SIZE;
-use xmas_elf::dynamic::Tag;
-use xmas_elf::sections::SectionData::{self, DynSymbolTable64, Dynamic64, Undefined};
+use spin::Mutex;
+use xmas_elf::sections::SectionData::{self, DynSymbolTable64, Undefined};
 use xmas_elf::symbol_table::{DynEntry64, Entry};
-use xmas_elf::{
-    header,
-    program::{Flags, Type},
-    ElfFile,
-};
-// The symbol data table.
-global_asm!(include_str!("symbol_table.asm"));
+use xmas_elf::{header, program::Type, ElfFile};
 
 /// `ModuleManager` is the core part of LKM.
 /// It does these jobs:
@@ -43,42 +26,13 @@ pub trait Provider: Send {
     fn map(&mut self, len: usize) -> Result<Box<VSpace>, &'static str>;
 }
 
-lazy_static! {
-    pub static ref LKM_MANAGER: Mutex<ModuleManager> 
-        = Mutex::new(ModuleManager::new(ProviderImpl::default()));
-}
-
 impl ModuleManager {
-    /// Load kernel symbols from `rcore_symbol_table` label
-    pub fn load_kernel_symbols(&mut self) {
-        use compression::prelude::*;
-        use core::str::from_utf8;
-
-        extern "C" {
-            fn rcore_symbol_table();
-            static rcore_symbol_table_size: usize;
+    pub fn new(provider: impl Provider + 'static) -> Self {
+        ModuleManager {
+            stub_symbols: BTreeMap::new(),
+            loaded_modules: Vec::new(),
+            provider: Box::new(provider),
         }
-        let symbol_table_start = rcore_symbol_table as usize;
-        let symbol_table_len = unsafe { rcore_symbol_table_size };
-        info!(
-            "Loading kernel symbol table {:08x} with size {:08x}",
-            symbol_table_start, symbol_table_len
-        );
-        if symbol_table_len == 0 {
-            warn!("Load kernel symbol table failed! This is because you didn't attach kernel table onto binary.");
-            return;
-        }
-        let zipped_symbols =
-            unsafe { slice::from_raw_parts(symbol_table_start as *const u8, symbol_table_len) };
-
-        let real_symbols = zipped_symbols
-            .to_vec()
-            .decode(&mut GZipDecoder::new())
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let real_symbols_utf8 = unsafe { from_utf8(&real_symbols).unwrap() };
-
-        self.add_kernel_symbols(parse_kernel_symbols(real_symbols_utf8));
     }
 
     pub fn add_kernel_symbols(&mut self, symbols: impl Iterator<Item = ModuleSymbol>) {
@@ -112,7 +66,7 @@ impl ModuleManager {
         self.loaded_modules.iter_mut().find(|m| m.info.name == name)
     }
 
-    pub fn init_module(&mut self, module_image: &[u8], param_values: &str) -> SysResult {
+    pub fn init_module(&mut self, module_image: &[u8], _param_values: &str) -> SysResult {
         let elf = ElfFile::new(module_image).expect("[LKM] failed to read elf");
 
         // check 64 bit
@@ -221,7 +175,7 @@ impl ModuleManager {
             using_counts: Arc::new(ModuleRef {}),
             vspace,
             lock: Mutex::new(()),
-            state: Ready,
+            state: ModuleState::Ready,
         });
         info!(
             "[LKM] module load done at {}, now need to do the relocation job.",
@@ -281,7 +235,7 @@ impl ModuleManager {
         Ok(0)
     }
 
-    pub fn delete_module(&mut self, name: &str, flags: u32) -> SysResult {
+    pub fn delete_module(&mut self, name: &str, _flags: u32) -> SysResult {
         //unimplemented!("[LKM] You can't plug out what's INSIDE you, RIGHT?");
 
         info!("[LKM] now you can plug out a kernel module!");
@@ -304,7 +258,7 @@ impl ModuleManager {
         }
         if cleanup_func > 0 {
             unsafe {
-                module.state = Unloading;
+                module.state = ModuleState::Unloading;
                 let cleanup_module: unsafe extern "C" fn() = transmute(cleanup_func);
                 cleanup_module();
             }
@@ -319,32 +273,6 @@ impl ModuleManager {
         info!("[LKM] Remove module {:?} done!", name);
         Ok(0)
     }
-
-    pub fn new(provider: impl Provider + 'static) -> Self {
-        info!("[LKM] Loadable Kernel Module Manager loading...");
-        let mut kmm = ModuleManager {
-            stub_symbols: BTreeMap::new(),
-            loaded_modules: Vec::new(),
-            provider: Box::new(provider),
-        };
-        kmm.load_kernel_symbols();
-        info!("[LKM] Loadable Kernel Module Manager loaded!");
-        kmm
-    }
-}
-
-/// Parse kernel symbols from 'nm kernel.elf' output string
-pub fn parse_kernel_symbols<'a>(s: &'a str) -> impl Iterator<Item = ModuleSymbol> + 'a {
-    s.lines().map(|l| {
-        let mut words = l.split_whitespace();
-        let address = words.next().unwrap();
-        let stype = words.next().unwrap();
-        let name = words.next().unwrap();
-        ModuleSymbol {
-            name: String::from(name),
-            loc: usize::from_str_radix(address, 16).unwrap(),
-        }
-    })
 }
 
 /// Helper functions for ELF
@@ -485,3 +413,14 @@ impl ElfExt for ElfFile<'_> {
         Ok(())
     }
 }
+
+pub type SysResult = Result<usize, usize>;
+
+const PAGE_SIZE: usize = 1 << 12;
+
+const EAGAIN: usize = 11;
+const EBUSY: usize = 16;
+const EEXIST: usize = 17;
+const ENOENT: usize = 2;
+const ENOEXEC: usize = 8;
+const ENOMEM: usize = 12;

@@ -2,21 +2,21 @@
 use crate::arch::paging::PageTableImpl;
 use crate::consts::*;
 use crate::memory::GlobalFrameAlloc;
-use crate::sync::SpinLock as Mutex;
-use alloc::vec::*;
 use alloc::boxed::Box;
+use alloc::vec::*;
 use buddy_system_allocator::*;
 use core::alloc::Layout;
 use core::mem::ManuallyDrop;
 use core::ops::DerefMut;
 use core::ptr::NonNull;
 use lazy_static::lazy_static;
+use rcore_lkm::manager::Provider;
+use rcore_lkm::structs::VSpace;
 use rcore_memory::memory_set::handler::{ByFrame, MemoryHandler};
 use rcore_memory::memory_set::MemoryAttr;
 use rcore_memory::{Page, PAGE_SIZE};
+use spin::Mutex;
 use xmas_elf::program::Flags;
-use super::structs::VSpace;
-use super::manager::Provider;
 
 /// Default LKM provider in rCore
 #[derive(Default)]
@@ -103,12 +103,7 @@ impl VSpace for VirtualSpace {
     fn start(&self) -> usize {
         self.start
     }
-    fn add_area(
-        &mut self,
-        start_addr: usize,
-        end_addr: usize,
-        flags: &Flags,
-    ) {
+    fn add_area(&mut self, start_addr: usize, end_addr: usize, flags: &Flags) {
         let mut attr = MemoryAttr::default();
         if flags.is_write() {
             attr = attr.writable();

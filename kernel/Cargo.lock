@@ -420,6 +420,7 @@ dependencies = [
  "raw-cpuid 6.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rcore-fs 0.1.0 (git+https://github.com/rcore-os/rcore-fs)",
  "rcore-fs-sfs 0.1.0 (git+https://github.com/rcore-os/rcore-fs)",
+ "rcore-lkm 0.1.0",
  "rcore-memory 0.1.0",
  "rcore-thread 0.1.0 (git+https://github.com/rcore-os/rcore-thread)",
  "riscv 0.5.0 (git+https://github.com/rcore-os/riscv)",
@@ -449,6 +450,15 @@ dependencies = [
  "rcore-fs 0.1.0 (git+https://github.com/rcore-os/rcore-fs)",
  "spin 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "static_assertions 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "rcore-lkm"
+version = "0.1.0"
+dependencies = [
+ "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "spin 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "xmas-elf 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

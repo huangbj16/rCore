@@ -1,8 +1,8 @@
-use crate::sync::SpinLock as Mutex;
+use alloc::boxed::Box;
 use alloc::string::*;
 use alloc::sync::Arc;
 use alloc::vec::*;
-use alloc::boxed::Box;
+use spin::Mutex;
 use xmas_elf::program::Flags;
 
 pub struct ModuleSymbol {
