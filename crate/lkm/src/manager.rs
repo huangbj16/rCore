@@ -1,3 +1,4 @@
+use self::ErrorKind::*;
 use super::const_reloc as loader;
 use super::structs::*;
 use alloc::boxed::Box;
@@ -59,6 +60,7 @@ impl ModuleManager {
                 }
             }
         }
+        debug!("[LKM] symbol not found: {}", symbol);
         None
     }
 
@@ -66,8 +68,9 @@ impl ModuleManager {
         self.loaded_modules.iter_mut().find(|m| m.info.name == name)
     }
 
-    pub fn init_module(&mut self, module_image: &[u8], _param_values: &str) -> SysResult {
-        let elf = ElfFile::new(module_image).expect("[LKM] failed to read elf");
+    pub fn init_module(&mut self, module_image: &[u8], _param_values: &str) -> LKMResult<()> {
+        let elf =
+            ElfFile::new(module_image).map_err(|_| Error::new(Invalid, "failed to read elf"))?;
 
         // check 64 bit
         let is32 = match elf.header.pt2 {
@@ -75,24 +78,22 @@ impl ModuleManager {
             header::HeaderPt2::Header64(_) => false,
         };
         if is32 {
-            error!("[LKM] 32-bit elf is not supported!");
-            return Err(ENOEXEC);
+            return Err(Error::new(NoExec, "32-bit elf is not supported"));
         }
 
         // check type
         match elf.header.pt2.type_().as_type() {
             header::Type::SharedObject => {}
             _ => {
-                error!("[LKM] a kernel module must be some shared object!");
-                return Err(ENOEXEC);
+                return Err(Error::new(
+                    NoExec,
+                    "a kernel module must be some shared object",
+                ))
             }
         }
 
         // check and get LKM info
-        let minfo = elf.module_info().map_err(|s| {
-            error!("[LKM] {}", s);
-            ENOEXEC
-        })?;
+        let minfo = elf.module_info()?;
 
         info!(
             "[LKM] loading module {} version {} api_version {}",
@@ -101,25 +102,28 @@ impl ModuleManager {
 
         // check name
         if self.find_module(&minfo.name).is_some() {
-            error!(
-                "[LKM] another instance of module {} (api version {}) has been loaded!",
-                minfo.name, minfo.api_version
-            );
-            return Err(EEXIST);
+            return Err(Error::new(
+                Exist,
+                format!(
+                    "another instance of module {} (api version {}) has been loaded!",
+                    minfo.name, minfo.api_version
+                ),
+            ));
         }
 
         // check dependencies
         for dependent in minfo.dependent_modules.iter() {
-            let module = self.find_module(&dependent.name).ok_or_else(|| {
-                error!("[LKM] dependent module not found: {}", dependent.name);
-                ENOEXEC
-            })?;
+            let module = self
+                .find_module(&dependent.name)
+                .ok_or(Error::new(NoExec, "dependent module not found"))?;
             if module.info.api_version != dependent.api_version {
-                error!(
-                    "[LKM] dependent module {} found but with a different api version {}!",
-                    module.info.name, module.info.api_version
-                );
-                return Err(ENOEXEC);
+                return Err(Error::new(
+                    NoExec,
+                    format!(
+                        "dependent module {} found but with a different api version {}",
+                        module.info.name, module.info.api_version
+                    ),
+                ));
             }
         }
         // increase reference count of dependent modules
@@ -130,10 +134,10 @@ impl ModuleManager {
 
         let map_len = elf.map_len();
         // We first map a huge piece. This requires the kernel model to be dense and not abusing vaddr.
-        let mut vspace = self.provider.map(map_len).map_err(|_| {
-            error!("[LKM] valloc failed!");
-            ENOMEM
-        })?;
+        let mut vspace = self
+            .provider
+            .map(map_len)
+            .map_err(|_| Error::new(NoMem, "valloc failed"))?;
         let base = vspace.start();
 
         //loaded_minfo.mem_start=base as usize;
@@ -142,10 +146,10 @@ impl ModuleManager {
         //    loaded_minfo.mem_size+=1;
         //}
         for ph in elf.program_iter() {
-            if ph.get_type().map_err(|_| {
-                error!("[LKM] program header error!");
-                ENOEXEC
-            })? == Type::Load
+            if ph
+                .get_type()
+                .map_err(|_| Error::new(NoExec, "program header error"))?
+                == Type::Load
             {
                 let prog_start_addr = base + (ph.virtual_addr() as usize);
                 let prog_end_addr = prog_start_addr + (ph.mem_size() as usize);
@@ -190,24 +194,15 @@ impl ModuleManager {
             |addr, value| unsafe {
                 (addr as *mut usize).write(value);
             },
-        )
-        .map_err(|s| {
-            error!("[LKM] {}", s);
-            ENOEXEC
-        })?;
+        )?;
         info!("[LKM] relocation done. adding module to manager and call init_module");
         let mut lkm_entry: usize = 0;
         for exported in loaded_minfo.info.exported_symbols.iter() {
-            for sym in elf.dynsym().map_err(|s| {
-                error!("[LKM] {}", s);
-                ENOEXEC
-            })? {
-                if exported
-                    == sym.get_name(&elf).map_err(|_| {
-                        error!("[LKM] load symbol name error!");
-                        ENOEXEC
-                    })?
-                {
+            for sym in elf.dynsym()? {
+                let name = sym
+                    .get_name(&elf)
+                    .map_err(|_| Error::new(NoExec, "load symbol name error"))?;
+                if exported == name {
                     let exported_symbol = ModuleSymbol {
                         name: exported.clone(),
                         loc: base + (sym.value() as usize),
@@ -224,30 +219,31 @@ impl ModuleManager {
         // Now everything is done, and the entry can be safely plugged into the vector.
         self.loaded_modules.push(loaded_minfo);
         if lkm_entry == 0 {
-            error!("[LKM] this module does not have init_module()!");
-            return Err(ENOEXEC);
+            return Err(Error::new(
+                NoExec,
+                "this module does not have init_module()",
+            ));
         }
-        info!("[LKM] calling init_module at {}", lkm_entry);
+        info!("[LKM] calling init_module at {:#x}", lkm_entry);
         unsafe {
             let init_module: unsafe extern "C" fn() = transmute(lkm_entry);
             init_module();
         }
-        Ok(0)
+        Ok(())
     }
 
-    pub fn delete_module(&mut self, name: &str, _flags: u32) -> SysResult {
-        //unimplemented!("[LKM] You can't plug out what's INSIDE you, RIGHT?");
-
+    pub fn delete_module(&mut self, name: &str, _flags: u32) -> LKMResult<()> {
         info!("[LKM] now you can plug out a kernel module!");
-        let module = self.find_module(name).ok_or(ENOENT)?;
+        let module = self
+            .find_module(name)
+            .ok_or(Error::new(NoEnt, "module not found"))?;
 
         let mod_lock = module.lock.lock();
         if module.used_counts > 0 {
-            error!("[LKM] some module depends on this module!");
-            return Err(EAGAIN);
+            return Err(Error::new(Again, "some module depends on this module"));
         }
         if Arc::strong_count(&module.using_counts) > 0 {
-            error!("[LKM] there are references to the module!");
+            return Err(Error::new(Again, "there are references to the module"));
         }
         let mut cleanup_func: usize = 0;
         for entry in module.exported_symbols.iter() {
@@ -263,15 +259,14 @@ impl ModuleManager {
                 cleanup_module();
             }
         } else {
-            error!("[LKM] you cannot plug this module out.");
-            return Err(EBUSY);
+            return Err(Error::new(Busy, "you cannot plug this module out"));
         }
         drop(mod_lock);
 
         // remove module
         self.loaded_modules.retain(|m| m.info.name != name);
         info!("[LKM] Remove module {:?} done!", name);
-        Ok(0)
+        Ok(())
     }
 }
 
@@ -281,10 +276,10 @@ trait ElfExt {
     fn map_len(&self) -> usize;
 
     /// Get dynamic entries from '.dynsym' section
-    fn dynsym(&self) -> Result<&[DynEntry64], &'static str>;
+    fn dynsym(&self) -> LKMResult<&[DynEntry64]>;
 
     /// Parse LKM info from '.rcore-lkm' section
-    fn module_info(&self) -> Result<ModuleInfo, &'static str>;
+    fn module_info(&self) -> LKMResult<ModuleInfo>;
 
     /// Relocate all symbols.
     fn relocate_symbols(
@@ -292,7 +287,7 @@ trait ElfExt {
         base: usize,
         query_symbol_location: impl Fn(&str) -> Option<usize>,
         write_ptr: impl Fn(usize, usize),
-    ) -> Result<(), &'static str>;
+    ) -> LKMResult<()>;
 }
 
 impl ElfExt for ElfFile<'_> {
@@ -323,29 +318,29 @@ impl ElfExt for ElfFile<'_> {
         max_addr - min_addr + off_start
     }
 
-    fn dynsym(&self) -> Result<&[DynEntry64], &'static str> {
+    fn dynsym(&self) -> LKMResult<&[DynEntry64]> {
         match self
             .find_section_by_name(".dynsym")
-            .ok_or(".dynsym not found!")?
+            .ok_or(".dynsym not found")?
             .get_data(self)
-            .map_err(|_| "corrupted .dynsym!")?
+            .map_err(|_| "corrupted .dynsym")?
         {
             DynSymbolTable64(dsym) => Ok(dsym),
-            _ => Err("bad .dynsym"),
+            _ => Err(Error::from("bad .dynsym")),
         }
     }
 
-    fn module_info(&self) -> Result<ModuleInfo, &'static str> {
+    fn module_info(&self) -> LKMResult<ModuleInfo> {
         let info_content = match self
             .find_section_by_name(".rcore-lkm")
-            .ok_or("rcore-lkm metadata not found!")?
+            .ok_or("rcore-lkm metadata not found")?
             .get_data(self)
-            .map_err(|_| "load rcore-lkm error!")?
+            .map_err(|_| "load rcore-lkm error")?
         {
             Undefined(c) => core::str::from_utf8(c).map_err(|_| "info content is not utf8")?,
-            _ => return Err("metadata section type wrong! this is not likely to happen..."),
+            _ => return Err(Error::from("metadata section type wrong")),
         };
-        let minfo = ModuleInfo::parse(info_content).ok_or("parse info error!")?;
+        let minfo = ModuleInfo::parse(info_content).ok_or("parse info error")?;
         Ok(minfo)
     }
 
@@ -354,32 +349,37 @@ impl ElfExt for ElfFile<'_> {
         base: usize,
         query_symbol_location: impl Fn(&str) -> Option<usize>,
         write_ptr: impl Fn(usize, usize),
-    ) -> Result<(), &'static str> {
+    ) -> LKMResult<()> {
         let dynsym = self.dynsym()?;
 
         // define a closure to relocate one symbol
         let relocate_symbol =
-            |sti: usize, offset: usize, addend: usize, itype: usize| -> Result<(), &'static str> {
+            |sti: usize, offset: usize, addend: usize, itype: usize| -> LKMResult<()> {
                 if sti == 0 {
                     return Ok(());
                 }
                 let dynsym = &dynsym[sti];
                 let sym_val = if dynsym.shndx() == 0 {
                     let name = dynsym.get_name(self)?;
-                    query_symbol_location(name).ok_or("symbol not found")?
+                    query_symbol_location(name).ok_or(format!("symbol not found: {}", name))?
                 } else {
                     base + dynsym.value() as usize
                 };
                 match itype as usize {
                     loader::REL_NONE => {}
-                    loader::REL_OFFSET32 => panic!("[LKM] REL_OFFSET32 detected!"),
+                    loader::REL_OFFSET32 => return Err(Error::from("REL_OFFSET32 detected")),
                     loader::REL_SYMBOLIC | loader::REL_GOT | loader::REL_PLT => {
                         write_ptr(base + offset, sym_val + addend);
                     }
                     loader::REL_RELATIVE => {
                         write_ptr(base + offset, base + addend);
                     }
-                    _ => panic!("[LKM] unsupported relocation type: {}", itype),
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported relocation type: {}",
+                            itype
+                        )))
+                    }
                 }
                 Ok(())
             };
@@ -388,6 +388,7 @@ impl ElfExt for ElfFile<'_> {
         for section in self.section_iter() {
             match section.get_data(self)? {
                 SectionData::Rela64(rela_items) => {
+                    debug!("[LKM] relocating section: {:?}", section);
                     for item in rela_items.iter() {
                         relocate_symbol(
                             item.get_symbol_table_index() as usize,
@@ -398,6 +399,7 @@ impl ElfExt for ElfFile<'_> {
                     }
                 }
                 SectionData::Rel64(rel_items) => {
+                    debug!("[LKM] relocating section: {:?}", section);
                     for item in rel_items.iter() {
                         relocate_symbol(
                             item.get_symbol_table_index() as usize,
@@ -414,13 +416,40 @@ impl ElfExt for ElfFile<'_> {
     }
 }
 
-pub type SysResult = Result<usize, usize>;
-
 const PAGE_SIZE: usize = 1 << 12;
 
-const EAGAIN: usize = 11;
-const EBUSY: usize = 16;
-const EEXIST: usize = 17;
-const ENOENT: usize = 2;
-const ENOEXEC: usize = 8;
-const ENOMEM: usize = 12;
+// error handling
+
+pub type LKMResult<T> = Result<T, Error>;
+
+#[derive(Debug)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub reason: String,
+}
+
+#[derive(Debug)]
+pub enum ErrorKind {
+    NoEnt = 2,
+    NoExec = 8,
+    Again = 11,
+    NoMem = 12,
+    Busy = 16,
+    Exist = 17,
+    Invalid = 22,
+}
+
+impl Error {
+    fn new(kind: ErrorKind, reason: impl Into<String>) -> Self {
+        Error {
+            kind,
+            reason: reason.into(),
+        }
+    }
+}
+
+impl<S: Into<String>> From<S> for Error {
+    fn from(reason: S) -> Self {
+        Error::new(NoExec, reason)
+    }
+}

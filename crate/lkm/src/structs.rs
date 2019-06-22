@@ -3,16 +3,21 @@ use alloc::string::*;
 use alloc::sync::Arc;
 use alloc::vec::*;
 use spin::Mutex;
-use xmas_elf::program::Flags;
+pub use xmas_elf::program::Flags;
 
+#[derive(Debug)]
 pub struct ModuleSymbol {
     pub name: String,
     pub loc: usize,
 }
+
+#[derive(Debug)]
 pub struct ModuleDependence {
     pub name: String,
     pub api_version: i32,
 }
+
+#[derive(Debug)]
 pub struct ModuleInfo {
     pub name: String,
     pub version: i32,
