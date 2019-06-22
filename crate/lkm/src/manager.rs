@@ -8,8 +8,9 @@ use alloc::sync::Arc;
 use alloc::vec::*;
 use core::mem::transmute;
 use spin::Mutex;
-use xmas_elf::sections::SectionData::{self, DynSymbolTable64, Undefined};
+use xmas_elf::sections::SectionData::{self, DynSymbolTable64, Undefined, Dynamic64};
 use xmas_elf::symbol_table::{DynEntry64, Entry};
+use xmas_elf::dynamic::Dynamic;
 use xmas_elf::{header, program::Type, ElfFile};
 
 /// `ModuleManager` is the core part of LKM.
@@ -224,10 +225,33 @@ impl ModuleManager {
                 "this module does not have init_module()",
             ));
         }
-        info!("[LKM] calling init_module at {:#x}", lkm_entry);
+
+        // get init & fini address
+        let mut init = None;
+        let mut fini = None;
+        for entry in elf.dynamic()? {
+            use xmas_elf::dynamic::Tag::*;
+            match entry.get_tag()? {
+                Init => init = Some(entry.get_ptr()? as usize),
+                Fini => fini = Some(entry.get_ptr()? as usize),
+                _ => {}
+            }
+        }
+        debug!("[LKM] init = {:x?}, fini = {:x?}", init, fini);
+
         unsafe {
+            // if let Some(init) = init {
+            //     let init_fn: unsafe extern "C" fn() = transmute(base + init);
+            //     debug!("[LKM] calling init at {:?}", init_fn);
+            //     init_fn();
+            // }
             let init_module: unsafe extern "C" fn() = transmute(lkm_entry);
+            debug!("[LKM] calling init_module at {:?}", init_module);
+            k();
             init_module();
+            #[inline(never)]
+            #[no_mangle]
+            fn k() {}
         }
         Ok(())
     }
@@ -275,8 +299,11 @@ trait ElfExt {
     /// Calculate length of LOAD sections to map
     fn map_len(&self) -> usize;
 
-    /// Get dynamic entries from '.dynsym' section
+    /// Get dynamic symbol entries from '.dynsym' section
     fn dynsym(&self) -> LKMResult<&[DynEntry64]>;
+
+    /// Get dynamic entries from '.dynamic' section
+    fn dynamic(&self) -> LKMResult<&[Dynamic<u64>]>;
 
     /// Parse LKM info from '.rcore-lkm' section
     fn module_info(&self) -> LKMResult<ModuleInfo>;
@@ -327,6 +354,18 @@ impl ElfExt for ElfFile<'_> {
         {
             DynSymbolTable64(dsym) => Ok(dsym),
             _ => Err(Error::from("bad .dynsym")),
+        }
+    }
+
+    fn dynamic(&self) -> LKMResult<&[Dynamic<u64>]> {
+        match self
+            .find_section_by_name(".dynamic")
+            .ok_or(".dynamic not found")?
+            .get_data(self)
+            .map_err(|_| "corrupted .dynamic")?
+        {
+            Dynamic64(e) => Ok(e),
+            _ => Err(Error::from("bad .dynamic")),
         }
     }
 
