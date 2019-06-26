@@ -67,8 +67,8 @@ rcore-memory = { path = "../crate/memory" }
 rcore-thread = { git = "https://github.com/rcore-os/rcore-thread" }
 rcore-fs = { git = "https://github.com/rcore-os/rcore-fs" }
 rcore-fs-sfs = { git = "https://github.com/rcore-os/rcore-fs" }
-rcore-lkm = { path = "../crate/lkm" }
-compression = { version="=0.1.3", default-features = false, features = ["gzip"] }
+rcore-lkm = { git = "https://github.com/rcore-os/rcore-lkm", rev = "92171ec" }
+compression = { version = "=0.1.3", default-features = false, features = ["gzip"] }
 
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
