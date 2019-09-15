@@ -37,12 +37,12 @@ pub fn init() {
     lapic.cpu_init();
 
     // enable FPU, the manual Volume 3 Chapter 13
-    let mut value: u64;
+    let mut cr4: u64;
     unsafe {
-        asm!("mov %cr4, $0" : "=r" (value));
+        asm!("mov %cr4, $0" : "=r" (cr4));
         // OSFXSR | OSXMMEXCPT
-        value |= 1 << 9 | 1 << 10;
-        asm!("mov $0, %cr4" :: "r" (value) : "memory");
+        cr4 |= 1 << 9 | 1 << 10;
+        asm!("mov $0, %cr4" :: "r" (cr4) : "memory");
         Cr0::update(|cr0| {
             cr0.remove(Cr0Flags::EMULATE_COPROCESSOR);
             cr0.insert(Cr0Flags::MONITOR_COPROCESSOR);
