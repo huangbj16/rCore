@@ -274,7 +274,7 @@ impl Syscall<'_> {
         mode: usize,
     ) -> SysResult {
         let mut proc = self.process();
-        let path = unsafe { check_and_clone_cstr(path)? };
+        let path = check_and_clone_cstr(path)?;
         let flags = OpenFlags::from_bits_truncate(flags);
         info!(
             "openat: dir_fd: {}, path: {:?}, flags: {:?}, mode: {:#o}",
@@ -338,7 +338,7 @@ impl Syscall<'_> {
     ) -> SysResult {
         // TODO: check permissions based on uid/gid
         let proc = self.process();
-        let path = unsafe { check_and_clone_cstr(path)? };
+        let path = check_and_clone_cstr(path)?;
         let flags = AtFlags::from_bits_truncate(flags);
         if !proc.pid.is_init() {
             // we trust pid 0 process
@@ -419,7 +419,7 @@ impl Syscall<'_> {
         len: usize,
     ) -> SysResult {
         let proc = self.process();
-        let path = unsafe { check_and_clone_cstr(path)? };
+        let path = check_and_clone_cstr(path)?;
         let slice = unsafe { self.vm().check_write_array(base, len)? };
         info!(
             "readlinkat: dirfd: {}, path: {:?}, base: {:?}, len: {}",
@@ -465,7 +465,7 @@ impl Syscall<'_> {
 
     pub fn sys_truncate(&mut self, path: *const u8, len: usize) -> SysResult {
         let proc = self.process();
-        let path = unsafe { check_and_clone_cstr(path)? };
+        let path = check_and_clone_cstr(path)?;
         info!("truncate: path: {:?}, len: {}", path, len);
         proc.lookup_inode(&path)?.resize(len)?;
         Ok(0)
@@ -678,7 +678,7 @@ impl Syscall<'_> {
 
     pub fn sys_unlinkat(&mut self, dirfd: usize, path: *const u8, flags: usize) -> SysResult {
         let proc = self.process();
-        let path = unsafe { check_and_clone_cstr(path)? };
+        let path = check_and_clone_cstr(path)?;
         let flags = AtFlags::from_bits_truncate(flags);
         info!(
             "unlinkat: dirfd: {}, path: {:?}, flags: {:?}",
@@ -876,7 +876,7 @@ impl Process {
         dirfd: usize,
         path: &str,
         follow: bool,
-    ) -> Result<Arc<INode>, SysError> {
+    ) -> Result<Arc<dyn INode>, SysError> {
         debug!(
             "lookup_inode_at: dirfd: {:?}, cwd: {:?}, path: {:?}, follow: {:?}",
             dirfd as isize, self.cwd, path, follow
@@ -916,7 +916,7 @@ impl Process {
         }
     }
 
-    pub fn lookup_inode(&self, path: &str) -> Result<Arc<INode>, SysError> {
+    pub fn lookup_inode(&self, path: &str) -> Result<Arc<dyn INode>, SysError> {
         self.lookup_inode_at(AT_FDCWD, path, true)
     }
 }
@@ -951,6 +951,8 @@ impl From<FsError> for SysError {
             FsError::IOCTLError => SysError::EINVAL,
             FsError::NoDevice => SysError::EINVAL,
             FsError::Again => SysError::EAGAIN,
+            FsError::SymLoop => SysError::ELOOP,
+            FsError::Busy => SysError::EBUSY,
         }
     }
 }
@@ -1293,7 +1295,7 @@ impl From<Metadata> for Stat {
             nlink: info.nlinks as u64,
             uid: info.uid as u32,
             gid: info.gid as u32,
-            rdev: 0,
+            rdev: info.rdev as u64,
             size: info.size as u64,
             blksize: info.blk_size as u64,
             blocks: info.blocks as u64,

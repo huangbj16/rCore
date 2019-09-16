@@ -9,7 +9,7 @@ use aarch64::paging::{
     page_table::{PageTable as Aarch64PageTable, PageTableEntry, PageTableFlags as EF},
     FrameAllocator, FrameDeallocator, Page as PageAllSizes, Size4KiB,
 };
-use aarch64::{PhysAddr, VirtAddr};
+use aarch64::PhysAddr;
 use core::mem::ManuallyDrop;
 use log::*;
 use rcore_memory::paging::*;
@@ -19,14 +19,14 @@ type Page = PageAllSizes<Size4KiB>;
 pub struct PageTableImpl {
     page_table: MappedPageTable<'static, fn(Frame) -> *mut Aarch64PageTable>,
     root_frame: Frame,
-    entry: PageEntry,
+    entry: Option<PageEntry>,
 }
 
 pub struct PageEntry(&'static mut PageTableEntry, Page);
 
 impl PageTable for PageTableImpl {
-    fn map(&mut self, addr: usize, target: usize) -> &mut Entry {
-        let flags = EF::default();
+    fn map(&mut self, addr: usize, target: usize) -> &mut dyn Entry {
+        let flags = EF::default_page() | EF::PXN | EF::UXN;
         let attr = MairNormal::attr_value();
         unsafe {
             self.page_table
@@ -51,12 +51,12 @@ impl PageTable for PageTableImpl {
             .flush();
     }
 
-    fn get_entry(&mut self, vaddr: usize) -> Option<&mut Entry> {
+    fn get_entry(&mut self, vaddr: usize) -> Option<&mut dyn Entry> {
         let page = Page::of_addr(vaddr as u64);
         if let Ok(e) = self.page_table.get_entry_mut(page) {
             let e = unsafe { &mut *(e as *mut PageTableEntry) };
-            self.entry = PageEntry(e, page);
-            Some(&mut self.entry as &mut Entry)
+            self.entry = Some(PageEntry(e, page));
+            Some(self.entry.as_mut().unwrap())
         } else {
             None
         }
@@ -85,6 +85,7 @@ pub enum MMIOType {
     Unsupported = 3,
 }
 
+// TODO: software dirty bit needs to be reconsidered
 impl Entry for PageEntry {
     fn update(&mut self) {
         tlb_invalidate(self.1.start_address());
@@ -161,9 +162,11 @@ impl Entry for PageEntry {
     }
     fn set_execute(&mut self, value: bool) {
         if self.user() {
-            self.as_flags().set(EF::UXN, !value)
+            self.as_flags().set(EF::UXN, !value);
+            self.as_flags().set(EF::PXN, true);
         } else {
-            self.as_flags().set(EF::PXN, !value)
+            self.as_flags().set(EF::PXN, !value);
+            self.as_flags().set(EF::UXN, true)
         }
     }
     fn mmio(&self) -> u8 {
@@ -213,7 +216,7 @@ impl PageTableImpl {
         ManuallyDrop::new(PageTableImpl {
             page_table: MappedPageTable::new(table, frame_to_page_table),
             root_frame: frame,
-            entry: core::mem::MaybeUninit::uninitialized().into_initialized(),
+            entry: None,
         })
     }
     /// The method for getting the kernel page table.
@@ -224,7 +227,7 @@ impl PageTableImpl {
         ManuallyDrop::new(PageTableImpl {
             page_table: MappedPageTable::new(table, frame_to_page_table),
             root_frame: frame,
-            entry: core::mem::MaybeUninit::uninitialized().into_initialized(),
+            entry: None,
         })
     }
 }
@@ -239,7 +242,7 @@ impl PageTableExt for PageTableImpl {
             PageTableImpl {
                 page_table: MappedPageTable::new(table, frame_to_page_table),
                 root_frame: frame,
-                entry: core::mem::MaybeUninit::uninitialized().into_initialized(),
+                entry: None,
             }
         }
     }

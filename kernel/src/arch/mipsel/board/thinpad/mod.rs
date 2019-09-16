@@ -1,15 +1,11 @@
-use alloc::string::String;
+use crate::drivers::gpu::fb::{self, FramebufferInfo};
 
-#[path = "../../../../drivers/console/mod.rs"]
-pub mod console;
 pub mod consts;
-#[path = "../../../../drivers/gpu/fb.rs"]
-pub mod fb;
 #[path = "../../../../drivers/serial/simple_uart.rs"]
 pub mod serial;
 
-use fb::FramebufferInfo;
-use fb::FramebufferResult;
+/// Device tree bytes
+pub static DTB: &'static [u8] = include_bytes!("device.dtb");
 
 /// Initialize serial port first
 pub fn init_serial_early() {
@@ -21,10 +17,7 @@ pub fn init_serial_early() {
 pub fn init_driver() {
     // TODO: add possibly more drivers
     // timer::init();
-    fb::init();
-}
 
-pub fn probe_fb_info(width: u32, height: u32, depth: u32) -> FramebufferResult {
     let fb_info = FramebufferInfo {
         xres: 800,
         yres: 600,
@@ -32,10 +25,11 @@ pub fn probe_fb_info(width: u32, height: u32, depth: u32) -> FramebufferResult {
         yres_virtual: 600,
         xoffset: 0,
         yoffset: 0,
-        depth: 8,
-        pitch: 800,
-        bus_addr: 0xa2000000,
+        depth: fb::ColorDepth::try_from(8)?,
+        format: fb::ColorFormat::RGB332,
+        paddr: 0xa2000000,
+        vaddr: 0xa2000000,
         screen_size: 800 * 600,
     };
-    Ok((fb_info, fb::ColorConfig::RGB332, 0xa2000000))
+    fb::init(fb_info);
 }

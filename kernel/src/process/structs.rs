@@ -84,7 +84,7 @@ lazy_static! {
 
 /// Let `rcore_thread` can switch between our `Thread`
 impl rcore_thread::Context for Thread {
-    unsafe fn switch_to(&mut self, target: &mut rcore_thread::Context) {
+    unsafe fn switch_to(&mut self, target: &mut dyn rcore_thread::Context) {
         use core::mem::transmute;
         let (target, _): (&mut Thread, *const ()) = transmute(target);
         self.context.switch(&mut target.context);
@@ -103,7 +103,7 @@ impl Thread {
         Box::new(Thread {
             context: Context::null(),
             // safety: other fields will never be used
-            ..core::mem::MaybeUninit::uninitialized().into_initialized()
+            ..core::mem::MaybeUninit::zeroed().assume_init()
         })
     }
 
@@ -139,14 +139,14 @@ impl Thread {
     /// Construct virtual memory of a new user process from ELF `data`.
     /// Return `(MemorySet, entry_point, ustack_top)`
     pub fn new_user_vm(
-        inode: &Arc<INode>,
+        inode: &Arc<dyn INode>,
         exec_path: &str,
         mut args: Vec<String>,
         envs: Vec<String>,
     ) -> Result<(MemorySet, usize, usize), &'static str> {
         // Read ELF header
         // 0x3c0: magic number from ld-musl.so
-        let mut data: [u8; 0x3c0] = unsafe { MaybeUninit::uninitialized().into_initialized() };
+        let mut data: [u8; 0x3c0] = unsafe { MaybeUninit::zeroed().assume_init() };
         inode
             .read_at(0, &mut data)
             .map_err(|_| "failed to read from INode")?;
@@ -197,8 +197,7 @@ impl Thread {
                 .lookup_follow(loader_path, FOLLOW_MAX_DEPTH)
                 .map_err(|_| "interpreter not found")?;
             // load loader by bias and set aux vector.
-            let mut interp_data: [u8; 0x3c0] =
-                unsafe { MaybeUninit::uninitialized().into_initialized() };
+            let mut interp_data: [u8; 0x3c0] = unsafe { MaybeUninit::zeroed().assume_init() };
             interp_inode
                 .read_at(0, &mut interp_data)
                 .map_err(|_| "failed to read from INode")?;
@@ -244,7 +243,7 @@ impl Thread {
 
     /// Make a new user process from ELF `data`
     pub fn new_user(
-        inode: &Arc<INode>,
+        inode: &Arc<dyn INode>,
         exec_path: &str,
         args: Vec<String>,
         envs: Vec<String>,
@@ -446,21 +445,26 @@ impl ToMemoryAttr for Flags {
 /// Helper functions to process ELF file
 trait ElfExt {
     /// Generate a MemorySet according to the ELF file.
-    fn make_memory_set(&self, inode: &Arc<INode>) -> (MemorySet, usize);
+    fn make_memory_set(&self, inode: &Arc<dyn INode>) -> (MemorySet, usize);
 
     /// Get interpreter string if it has.
     fn get_interpreter(&self) -> Result<&str, &str>;
 
     /// Append current ELF file as interpreter into given memory set.
     /// This will insert the interpreter it a place which is "good enough" (since ld.so should be PIC).
-    fn append_as_interpreter(&self, inode: &Arc<INode>, memory_set: &mut MemorySet, bias: usize);
+    fn append_as_interpreter(
+        &self,
+        inode: &Arc<dyn INode>,
+        memory_set: &mut MemorySet,
+        bias: usize,
+    );
 
     /// Get virtual address of PHDR section if it has.
     fn get_phdr_vaddr(&self) -> Option<u64>;
 }
 
 impl ElfExt for ElfFile<'_> {
-    fn make_memory_set(&self, inode: &Arc<INode>) -> (MemorySet, usize) {
+    fn make_memory_set(&self, inode: &Arc<dyn INode>) -> (MemorySet, usize) {
         debug!("creating MemorySet from ELF");
         let mut ms = MemorySet::new();
         let mut farthest_memory: usize = 0;
@@ -490,7 +494,7 @@ impl ElfExt for ElfFile<'_> {
             (Page::of_addr(farthest_memory + PAGE_SIZE)).start_address(),
         )
     }
-    fn append_as_interpreter(&self, inode: &Arc<INode>, ms: &mut MemorySet, bias: usize) {
+    fn append_as_interpreter(&self, inode: &Arc<dyn INode>, ms: &mut MemorySet, bias: usize) {
         debug!("inserting interpreter from ELF");
 
         for ph in self.program_iter() {
@@ -551,7 +555,7 @@ impl ElfExt for ElfFile<'_> {
 }
 
 #[derive(Clone)]
-pub struct INodeForMap(pub Arc<INode>);
+pub struct INodeForMap(pub Arc<dyn INode>);
 
 impl Read for INodeForMap {
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> usize {

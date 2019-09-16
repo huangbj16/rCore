@@ -66,9 +66,10 @@
 
 use super::consts::*;
 use super::TrapFrame;
-use crate::drivers::DRIVERS;
+use crate::drivers::{DRIVERS, IRQ_MANAGER};
 use bitflags::*;
 use log::*;
+use x86_64::registers::control::Cr2;
 
 global_asm!(include_str!("trap.asm"));
 global_asm!(include_str!("vector.asm"));
@@ -86,7 +87,7 @@ pub extern "C" fn rust_trap(tf: &mut TrapFrame) {
         Breakpoint => breakpoint(),
         DoubleFault => double_fault(tf),
         PageFault => page_fault(tf),
-        IRQ0...63 => {
+        IRQ0..=63 => {
             let irq = tf.trap_num as u8 - IRQ0;
             super::ack(irq); // must ack before switching
             match irq {
@@ -96,11 +97,9 @@ pub extern "C" fn rust_trap(tf: &mut TrapFrame) {
                 COM2 => com2(),
                 IDE => ide(),
                 _ => {
-                    for driver in DRIVERS.read().iter() {
-                        if driver.try_handle_interrupt(Some(irq.into())) == true {
-                            debug!("driver processed interrupt");
-                            return;
-                        }
+                    if IRQ_MANAGER.read().try_handle_interrupt(Some(irq.into())) {
+                        debug!("driver processed interrupt");
+                        return;
                     }
                     warn!("unhandled external IRQ number: {}", irq);
                 }
@@ -128,10 +127,7 @@ fn double_fault(tf: &TrapFrame) {
 }
 
 fn page_fault(tf: &mut TrapFrame) {
-    let addr: usize;
-    unsafe {
-        asm!("mov %cr2, $0" : "=r" (addr));
-    }
+    let addr = Cr2::read().as_u64() as usize;
 
     bitflags! {
         struct PageError: u8 {

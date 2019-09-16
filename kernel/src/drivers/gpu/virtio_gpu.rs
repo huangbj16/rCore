@@ -16,7 +16,7 @@ use crate::sync::SpinNoIrqLock as Mutex;
 use crate::HEAP_ALLOCATOR;
 
 use super::super::bus::virtio_mmio::*;
-use super::super::{DeviceType, Driver, DRIVERS};
+use super::super::{DeviceType, Driver, DRIVERS, IRQ_MANAGER};
 use super::test::mandelbrot;
 use crate::memory::phys_to_virt;
 
@@ -266,11 +266,12 @@ fn setup_framebuffer(driver: &mut VirtIOGpu) {
     let frame_buffer = unsafe {
         HEAP_ALLOCATOR.alloc_zeroed(Layout::from_size_align(size as usize, PAGE_SIZE).unwrap())
     } as usize;
-    mandelbrot(
-        driver.rect.width,
-        driver.rect.height,
-        frame_buffer as *mut u32,
-    );
+    // test framebuffer
+//    mandelbrot(
+//        driver.rect.width,
+//        driver.rect.height,
+//        frame_buffer as *mut u32,
+//    );
     driver.frame_buffer = frame_buffer;
     let request_resource_attach_backing = unsafe {
         &mut *(driver.queue_buffer[VIRTIO_BUFFER_TRANSMIT] as *mut VirtIOGpuResourceAttachBacking)
@@ -399,5 +400,6 @@ pub fn virtio_gpu_init(node: &Node) {
     setup_framebuffer(&mut driver);
 
     let driver = Arc::new(VirtIOGpuDriver(Mutex::new(driver)));
+    IRQ_MANAGER.write().register_all(driver.clone());
     DRIVERS.write().push(driver);
 }

@@ -1,8 +1,11 @@
 use aarch64::addr::{PhysAddr, VirtAddr};
-use aarch64::paging::{memory_attribute::*, Page, PageTable, PageTableFlags as EF, PhysFrame};
-use aarch64::paging::{Size1GiB, Size2MiB, Size4KiB};
+use aarch64::paging::{memory_attribute::*, PageTable, PageTableAttribute, PageTableFlags as EF};
+use aarch64::paging::{Page, PhysFrame, Size1GiB, Size2MiB, Size4KiB};
 use aarch64::{asm::*, barrier, regs::*};
-use bcm2837::consts::RAW_IO_BASE;
+use bcm2837::addr::{phys_to_virt, virt_to_phys};
+use bcm2837::addr::{PHYSICAL_IO_END, PHYSICAL_IO_START, PHYSICAL_MEMORY_OFFSET};
+use bcm2837::atags::Atags;
+use bootinfo::BootInfo;
 use core::ptr;
 use fixedvec::FixedVec;
 use xmas_elf::program::{ProgramHeader64, Type};
@@ -10,18 +13,15 @@ use xmas_elf::program::{ProgramHeader64, Type};
 const PAGE_SIZE: usize = 4096;
 const ALIGN_2MB: u64 = 0x200000;
 
-const PHYSICAL_MEMORY_OFFSET: u64 = 0xFFFF_0000_0000_0000;
-
 global_asm!(include_str!("boot.S"));
 
-/// Convert physical address to virtual address
-const fn phys_to_virt(paddr: u64) -> u64 {
-    PHYSICAL_MEMORY_OFFSET + paddr
-}
-
-/// Convert virtual address to physical address
-const fn virt_to_phys(vaddr: u64) -> u64 {
-    vaddr - PHYSICAL_MEMORY_OFFSET
+fn map_2mib(p2: &mut PageTable, start: usize, end: usize, flag: EF, attr: PageTableAttribute) {
+    for frame in PhysFrame::<Size2MiB>::range_of(start as u64, end as u64) {
+        let paddr = frame.start_address();
+        let vaddr = VirtAddr::new(phys_to_virt(paddr.as_u64() as usize) as u64);
+        let page = Page::<Size2MiB>::containing_address(vaddr);
+        p2[page.p2_index()].set_block::<Size2MiB>(paddr, flag, attr);
+    }
 }
 
 // TODO: set segments permission
@@ -42,26 +42,18 @@ fn create_page_table(start_paddr: usize, end_paddr: usize) {
     p3.zero();
     p2.zero();
 
-    let block_flags = EF::VALID | EF::AF | EF::WRITE | EF::UXN;
+    let block_flags = EF::default_block() | EF::UXN;
     // normal memory
-    for frame in PhysFrame::<Size2MiB>::range_of(start_paddr as u64, end_paddr as u64) {
-        let paddr = frame.start_address();
-        let vaddr = VirtAddr::new(phys_to_virt(paddr.as_u64()));
-        let page = Page::<Size2MiB>::containing_address(vaddr);
-        p2[page.p2_index()].set_block::<Size2MiB>(paddr, block_flags, MairNormal::attr_value());
-    }
+    map_2mib(p2, start_paddr, end_paddr, block_flags, MairNormal::attr_value());
+    // normal non-cacheable memory
+    map_2mib(p2, end_paddr, PHYSICAL_IO_START, block_flags | EF::PXN, MairNormalNonCacheable::attr_value());
     // device memory
-    for frame in PhysFrame::<Size2MiB>::range_of(RAW_IO_BASE as u64, 0x4000_0000) {
-        let paddr = frame.start_address();
-        let vaddr = VirtAddr::new(phys_to_virt(paddr.as_u64()));
-        let page = Page::<Size2MiB>::containing_address(vaddr);
-        p2[page.p2_index()].set_block::<Size2MiB>(paddr, block_flags | EF::PXN, MairDevice::attr_value());
-    }
+    map_2mib(p2, PHYSICAL_IO_START, PHYSICAL_IO_END, block_flags | EF::PXN, MairDevice::attr_value());
 
-    p3[0].set_frame(frame_lvl2, EF::default(), MairNormal::attr_value());
-    p3[1].set_block::<Size1GiB>(PhysAddr::new(0x4000_0000), block_flags | EF::PXN, MairDevice::attr_value());
+    p3[0].set_frame(frame_lvl2, EF::default_table(), PageTableAttribute::new(0, 0, 0));
+    p3[1].set_block::<Size1GiB>(PhysAddr::new(PHYSICAL_IO_END as u64), block_flags | EF::PXN, MairDevice::attr_value());
 
-    p4[0].set_frame(frame_lvl3, EF::default(), MairNormal::attr_value());
+    p4[0].set_frame(frame_lvl3, EF::default_table(), PageTableAttribute::new(0, 0, 0));
 
     // the bootloader is still running at the lower virtual address range,
     // so the TTBR0_EL1 also needs to be set.
@@ -113,7 +105,21 @@ fn enable_mmu() {
     unsafe { barrier::isb(barrier::SY) }
 }
 
-pub fn map_kernel(kernel_start: usize, segments: &FixedVec<ProgramHeader64>) {
+/// Returns the (start address, end address) of the physical memory on this
+/// system if it can be determined. If it cannot, `None` is returned.
+///
+/// This function is expected to return `Some` under all normal cirumstances.
+fn probe_memory() -> Option<(usize, usize)> {
+    let mut atags: Atags = Atags::get();
+    while let Some(atag) = atags.next() {
+        if let Some(mem) = atag.mem() {
+            return Some((mem.start as usize, (mem.start + mem.size) as usize));
+        }
+    }
+    None
+}
+
+pub fn copy_kernel(kernel_start: usize, segments: &FixedVec<ProgramHeader64>) -> (BootInfo, usize) {
     // reverse program headers to avoid overlapping in memory copying
     let mut space = alloc_stack!([ProgramHeader64; 32]);
     let mut rev_segments = FixedVec::new(&mut space);
@@ -133,7 +139,7 @@ pub fn map_kernel(kernel_start: usize, segments: &FixedVec<ProgramHeader64>) {
 
         unsafe {
             let src = (kernel_start as u64 + offset) as *const u8;
-            let dst = virt_to_phys(virt_addr) as *mut u8;
+            let dst = virt_to_phys(virt_addr as usize) as *mut u8;
             ptr::copy(src, dst, file_size as usize);
             ptr::write_bytes(dst.offset(file_size as isize), 0, (mem_size - file_size) as usize);
         }
@@ -146,6 +152,16 @@ pub fn map_kernel(kernel_start: usize, segments: &FixedVec<ProgramHeader64>) {
         }
     }
 
-    create_page_table(0, RAW_IO_BASE);
+    let (start, end) = probe_memory().expect("failed to find memory map");
+    create_page_table(start, end);
     enable_mmu();
+
+    (
+        BootInfo {
+            physical_memory_start: start,
+            physical_memory_end: end,
+            physical_memory_offset: PHYSICAL_MEMORY_OFFSET,
+        },
+        end_vaddr.as_u64() as usize,
+    )
 }

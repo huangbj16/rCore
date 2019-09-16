@@ -12,7 +12,7 @@ use rcore_memory::paging::*;
 pub struct PageTableImpl {
     page_table: TwoLevelPageTable<'static>,
     root_frame: Frame,
-    entry: PageEntry,
+    entry: Option<PageEntry>,
 }
 
 /// PageTableEntry: the contents of this entry.
@@ -20,7 +20,7 @@ pub struct PageTableImpl {
 pub struct PageEntry(&'static mut PageTableEntry, Page);
 
 impl PageTable for PageTableImpl {
-    fn map(&mut self, addr: usize, target: usize) -> &mut Entry {
+    fn map(&mut self, addr: usize, target: usize) -> &mut dyn Entry {
         // map the 4K `page` to the 4K `frame` with `flags`
         let flags = EF::VALID | EF::WRITABLE | EF::CACHEABLE;
         let page = Page::of_addr(VirtAddr::new(addr));
@@ -39,12 +39,12 @@ impl PageTable for PageTableImpl {
         flush.flush();
     }
 
-    fn get_entry(&mut self, vaddr: usize) -> Option<&mut Entry> {
+    fn get_entry(&mut self, vaddr: usize) -> Option<&mut dyn Entry> {
         let page = Page::of_addr(VirtAddr::new(vaddr));
         if let Ok(e) = self.page_table.ref_entry(page.clone()) {
             let e = unsafe { &mut *(e as *mut PageTableEntry) };
-            self.entry = PageEntry(e, page);
-            Some(&mut self.entry as &mut Entry)
+            self.entry = Some(PageEntry(e, page));
+            Some(self.entry.as_mut().unwrap())
         } else {
             None
         }
@@ -83,9 +83,7 @@ pub fn root_page_table_buffer() -> &'static mut MIPSPageTable {
 /// implementation for the Entry trait in /crate/memory/src/paging/mod.rs
 impl Entry for PageEntry {
     fn update(&mut self) {
-        unsafe {
-            TLBEntry::clear_all();
-        }
+        TLBEntry::clear_all();
     }
     fn accessed(&self) -> bool {
         self.0.flags().contains(EF::ACCESSED)
@@ -156,7 +154,7 @@ impl PageTableImpl {
         ManuallyDrop::new(PageTableImpl {
             page_table: TwoLevelPageTable::new(table),
             root_frame: frame,
-            entry: unsafe { core::mem::MaybeUninit::uninitialized().into_initialized() },
+            entry: None,
         })
     }
 
@@ -178,7 +176,7 @@ impl PageTableExt for PageTableImpl {
         PageTableImpl {
             page_table: TwoLevelPageTable::new(table),
             root_frame: frame,
-            entry: unsafe { core::mem::MaybeUninit::uninitialized().into_initialized() },
+            entry: None,
         }
     }
 
@@ -199,9 +197,7 @@ impl PageTableExt for PageTableImpl {
     }
 
     fn flush_tlb() {
-        unsafe {
-            TLBEntry::clear_all();
-        }
+        TLBEntry::clear_all();
     }
 }
 

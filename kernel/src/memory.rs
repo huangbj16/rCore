@@ -24,7 +24,6 @@ use core::mem::size_of;
 use lazy_static::*;
 use log::*;
 pub use rcore_memory::memory_set::{handler::*, MemoryArea, MemoryAttr};
-use rcore_memory::paging::PageTable;
 use rcore_memory::*;
 
 pub type MemorySet = rcore_memory::memory_set::MemorySet<PageTableImpl>;
@@ -55,11 +54,13 @@ lazy_static! {
 }
 
 /// Convert physical address to virtual address
+// #[inline]
 pub const fn phys_to_virt(paddr: usize) -> usize {
     PHYSICAL_MEMORY_OFFSET + paddr
 }
 
 /// Convert virtual address to physical address
+// #[inline]
 pub const fn virt_to_phys(vaddr: usize) -> usize {
     vaddr - PHYSICAL_MEMORY_OFFSET
 }
@@ -191,7 +192,7 @@ pub fn copy_from_user<T>(addr: *const T) -> Option<T> {
     if !access_ok(addr as usize, size_of::<T>()) {
         return None;
     }
-    let mut dst: T = unsafe { core::mem::uninitialized() };
+    let mut dst: T = unsafe { core::mem::zeroed() };
     match unsafe { read_user(&mut dst, addr) } {
         0 => Some(dst),
         _ => None,

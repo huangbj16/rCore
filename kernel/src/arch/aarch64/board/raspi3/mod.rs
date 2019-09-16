@@ -1,19 +1,14 @@
 //! Raspberry PI 3 Model B/B+
 
-use bcm2837::atags::Atags;
+use bcm2837::{addr::bus_to_phys, atags::Atags};
 
 pub mod emmc;
-#[path = "../../../../drivers/gpu/fb.rs"]
-pub mod fb;
 pub mod irq;
 pub mod mailbox;
 pub mod serial;
 pub mod timer;
 
-use fb::{ColorConfig, FramebufferResult};
-
-pub const IO_REMAP_BASE: usize = bcm2837::consts::IO_BASE;
-pub const IO_REMAP_END: usize = bcm2837::consts::KERNEL_OFFSET + 0x4000_1000;
+use crate::drivers::gpu::fb::{self, ColorDepth, ColorFormat, FramebufferInfo, FramebufferResult};
 
 /// Initialize serial port before other initializations.
 pub fn init_serial_early() {
@@ -23,8 +18,9 @@ pub fn init_serial_early() {
 
 /// Initialize raspi3 drivers
 pub fn init_driver() {
-    #[cfg(not(feature = "nographic"))]
-    fb::init();
+    if let Ok(fb_info) = probe_fb_info(0, 0, 0) {
+        fb::init(fb_info);
+    }
     timer::init();
     emmc::init();
 }
@@ -43,7 +39,7 @@ pub fn probe_memory() -> Option<(usize, usize)> {
     None
 }
 
-pub fn probe_fb_info(width: u32, height: u32, depth: u32) -> FramebufferResult {
+fn probe_fb_info(width: u32, height: u32, depth: u32) -> FramebufferResult {
     let (width, height) = if width == 0 || height == 0 {
         mailbox::framebuffer_get_physical_size()?
     } else {
@@ -68,7 +64,7 @@ pub fn probe_fb_info(width: u32, height: u32, depth: u32) -> FramebufferResult {
         ))?;
     }
 
-    let paddr = info.bus_addr & !0xC0000000;
+    let paddr = bus_to_phys(info.bus_addr);
     let vaddr = crate::memory::phys_to_virt(paddr as usize);
     if vaddr == 0 {
         Err(format!(
@@ -78,10 +74,23 @@ pub fn probe_fb_info(width: u32, height: u32, depth: u32) -> FramebufferResult {
         ))?;
     }
 
-    let color_config = match info.depth {
-        16 => ColorConfig::RGB565,
-        32 => ColorConfig::BGRA8888,
+    let depth = ColorDepth::try_from(info.depth)?;
+    let format = match info.depth {
+        16 => ColorFormat::RGB565,
+        32 => ColorFormat::BGRA8888,
         _ => Err(format!("unsupported color depth {}", info.depth))?,
     };
-    Ok((info, color_config, vaddr))
+    Ok(FramebufferInfo {
+        xres: info.xres,
+        yres: info.yres,
+        xres_virtual: info.xres_virtual,
+        yres_virtual: info.yres_virtual,
+        xoffset: info.xoffset,
+        yoffset: info.yoffset,
+        depth: depth,
+        format: format,
+        paddr: paddr as usize,
+        vaddr: vaddr,
+        screen_size: info.screen_size as usize,
+    })
 }

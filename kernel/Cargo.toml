@@ -49,61 +49,51 @@ opt-level = 2
 [dependencies]
 log = "0.4"
 spin = "0.5"
-xmas-elf = "0.6"
-bitflags = "1.0"
-bit_field = "0.9"
+xmas-elf = "0.7"
+bitflags = "1.1"
+bit_field = "0.10"
 volatile = "0.2"
-heapless = "0.4"
-bitvec = { version = "0.11", default-features = false, features = ["alloc"] }
-console-traits = "0.3"
+bitvec = { version = "0.14", default-features = false, features = ["alloc"] }
 buddy_system_allocator = "0.3"
 pci = { git = "https://github.com/rcore-os/pci-rs" }
 device_tree = { git = "https://github.com/rcore-os/device_tree-rs" }
 isomorphic_drivers = { git = "https://github.com/rcore-os/isomorphic_drivers", features = ["log"] }
-lazy_static = { version = "1.3", features = ["spin_no_std"] }
+lazy_static = { version = "1.4", features = ["spin_no_std"] }
 smoltcp = { git = "https://github.com/rcore-os/smoltcp", default-features = false, features = ["alloc", "log", "proto-ipv4", "proto-igmp", "socket-icmp", "socket-udp", "socket-tcp", "socket-raw"] }
 bitmap-allocator = { git = "https://github.com/rcore-os/bitmap-allocator" }
+rcore-console = { git = "https://github.com/rcore-os/rcore-console", rev = "b7bacf9", default-features = false }
 rcore-memory = { path = "../crate/memory" }
 rcore-thread = { git = "https://github.com/rcore-os/rcore-thread" }
-rcore-fs = { git = "https://github.com/rcore-os/rcore-fs" }
-rcore-fs-sfs = { git = "https://github.com/rcore-os/rcore-fs" }
+rcore-fs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
+rcore-fs-sfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
+rcore-fs-ramfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
+rcore-fs-mountfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
+rcore-fs-devfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
 rcore-lkm = { git = "https://github.com/rcore-os/rcore-lkm", rev = "92171ec" }
-compression = { version = "=0.1.3", default-features = false, features = ["gzip"] }
+compression = { version = "=0.1.4", default-features = false, features = ["gzip"] }
 
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-bootloader = { git = "https://github.com/rcore-os/bootloader", branch = "vga" }
+rboot = { path = "../rboot" }
 apic = { git = "https://github.com/rcore-os/apic-rs" }
-x86_64 = "0.6"
-raw-cpuid = "6.0"
+x86_64 = "0.7"
+raw-cpuid = "7.0"
 uart_16550 = "0.2"
 pc-keyboard = "0.5"
+acpi = "0.4"
+aml = "0.4"
 
 [target.'cfg(any(target_arch = "riscv32", target_arch = "riscv64"))'.dependencies]
 riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
-aarch64 = { git = "https://github.com/rcore-os/aarch64", version = "2.6.1" }
-bcm2837 = { git = "https://github.com/rcore-os/bcm2837", version = "1.0.0", optional = true }
+bootinfo = { path = "../bootloader/bootinfo" }
+aarch64 = { git = "https://github.com/rcore-os/aarch64", version = "2.7.0" }
+bcm2837 = { git = "https://github.com/rcore-os/bcm2837", version = "2.1.0", optional = true }
 
 [target.'cfg(target_arch = "mips")'.dependencies]
 mips = "^0.2.0"
 paste = "0.1"
-
-[package.metadata.bootimage]
-default-target = "targets/x86_64.json"
-output = "target/x86_64/bootimage.bin"
-minimum-image-size = 0      # The minimum output file size (in MiB)
-# The command invoked on `bootimage run`
-# (the "{}" will be replaced with the path to the bootable disk image)
-run-command = ["qemu-system-x86_64",
-    "-drive", "format=raw,file={}",
-    # TODO: use USER_IMG environment variable
-    "-drive", "format=raw,file=../user/img/ucore-i386-pic.img,media=disk,cache=writeback",
-    "-serial", "mon:stdio",
-    "-device", "isa-debug-exit",
-    "-smp", "4"
-]
 
 [build-dependencies]
 cc = "1.0"

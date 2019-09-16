@@ -1,14 +1,15 @@
 #![feature(lang_items)]
-#![feature(alloc)]
 #![feature(naked_functions)]
 #![feature(untagged_unions)]
 #![feature(asm)]
 #![feature(optin_builtin_traits)]
 #![feature(panic_info_message)]
 #![feature(global_asm)]
-#![feature(fnbox)]
-#![feature(maybe_uninit)]
+#![feature(alloc_prelude)]
 #![deny(unused_must_use)]
+#![deny(stable_features)]
+#![deny(unused_unsafe)]
+#![deny(ellipsis_inclusive_range_patterns)]
 #![no_std]
 
 // just keep it ...
