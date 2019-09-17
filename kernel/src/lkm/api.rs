@@ -71,12 +71,3 @@ pub extern "C" fn lkm_api_info(ptr: *const u8) {
     let text = unsafe { cstr_to_str(ptr, 1024) };
     info!("{}", text);
 }
-
-#[no_mangle]
-pub extern "C" fn lkm_api_add_kernel_symbols(start: usize, end: usize) {
-    let length = end - start;
-    use core::str::from_utf8;
-    let symbols = unsafe { from_utf8(from_raw_parts(start as *const u8, length)) }.unwrap();
-    let mut lkmm = LKM_MANAGER.lock();
-    lkmm.add_kernel_symbols(parse_kernel_symbols(symbols));
-}

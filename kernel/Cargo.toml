@@ -69,8 +69,8 @@ rcore-fs-sfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" 
 rcore-fs-ramfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
 rcore-fs-mountfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
 rcore-fs-devfs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
-rcore-lkm = { git = "https://github.com/rcore-os/rcore-lkm", rev = "92171ec" }
-compression = { version = "=0.1.4", default-features = false, features = ["gzip"] }
+rcore-lkm = { git = "https://github.com/rcore-os/rcore-lkm", rev = "27798b5f" }
+rcore-api = { path = "../crate/api" }
 
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]

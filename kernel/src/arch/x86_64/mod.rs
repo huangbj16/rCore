@@ -57,8 +57,6 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     // WARN: IDT must be initialized after GDT.
     //       Because x86_64::IDT will use current CS segment in IDT entry.
     idt::init();
-    // Init virtual space
-    memory::init_kernel_kseg2_map();
     // get local apic id of cpu
     cpu::init();
     // Use IOAPIC instead of PIC, use APIC Timer instead of PIT, init serial&keyboard in x86_64

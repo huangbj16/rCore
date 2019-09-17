@@ -320,8 +320,6 @@ kernel: $(dtb)
 	@echo Building $(arch) kernel
 ifeq ($(arch), x86_64)
 	@cargo xbuild $(build_args)
-	@echo "Now patching kernel symbols onto kernel."
-	@../tools/fill_symbols/x86_64.sh target/x86_64/$(mode)/rcore
 else ifeq ($(arch), $(filter $(arch), riscv32 riscv64))
 ifeq ($(board), k210)
 	@cp src/arch/riscv32/board/k210/linker.ld src/arch/riscv32/boot/linker64.ld

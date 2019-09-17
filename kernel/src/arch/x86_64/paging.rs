@@ -233,11 +233,9 @@ impl PageTableExt for PageTableImpl {
         let table = unsafe { &mut *frame_to_page_table(Cr3::read().0) };
         let ekernel = table[KERNEL_PM4].clone();
         let ephysical = table[PHYSICAL_MEMORY_PM4].clone();
-        let ekseg2 = table[KSEG2_PM4].clone();
         let table = unsafe { &mut *frame_to_page_table(self.2) };
         table[KERNEL_PM4].set_addr(ekernel.addr(), ekernel.flags());
         table[PHYSICAL_MEMORY_PM4].set_addr(ephysical.addr(), ephysical.flags());
-        table[KSEG2_PM4].set_addr(ekseg2.addr(), ekseg2.flags());
     }
 
     fn token(&self) -> usize {

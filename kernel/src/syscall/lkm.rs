@@ -3,6 +3,9 @@ use crate::lkm::LKM_MANAGER;
 use crate::sync::Mutex;
 use alloc::collections::btree_map::BTreeMap;
 use rcore_lkm::manager::Error as LKMError;
+use rcore_api::RcoreAPI;
+use core::alloc::GlobalAlloc;
+use log::Log;
 
 impl Syscall<'_> {
     pub fn sys_init_module(
@@ -17,7 +20,7 @@ impl Syscall<'_> {
 
         LKM_MANAGER
             .lock()
-            .init_module(modimg, &copied_param_values)?;
+            .init_module(modimg, &copied_param_values, &*RCORE_API as *const _ as usize)?;
         Ok(0)
     }
 
@@ -35,4 +38,12 @@ impl From<LKMError> for SysError {
         error!("[LKM] {}", e.reason);
         unsafe { core::mem::transmute(e.kind as usize) }
     }
+}
+
+lazy_static! {
+    static ref RCORE_API: RcoreAPI = RcoreAPI {
+        allocator: &crate::HEAP_ALLOCATOR,
+        logger: log::logger(),
+        test: || info!("hello from kernel module"),
+    };
 }

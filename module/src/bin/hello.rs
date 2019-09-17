@@ -1,11 +1,12 @@
 #![no_std]
-#![feature(alloc)]
+#![no_main]
 #![feature(global_asm)]
 
-extern crate rcore;
-mod main;
+use rcore_module;
 
-global_asm!(r#"
+global_asm!(
+    r#"
     .section .rcore-lkm
     .incbin "lkm_info.txt"
-"#);
+"#
+);

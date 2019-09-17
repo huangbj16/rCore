@@ -1,0 +1,12 @@
+[package]
+name = "rcore-api"
+version = "0.1.0"
+authors = ["Runji Wang <wangrunji0408@163.com>"]
+edition = "2018"
+description = "rCore kernel API for kernel modules"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rcore-fs = { git = "https://github.com/rcore-os/rcore-fs", rev = "33f86c47" }
+log = "0.4"
